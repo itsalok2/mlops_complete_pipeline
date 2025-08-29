@@ -1,4 +1,7 @@
 import os
+import yaml
+import csv
+import pyarrow  # required for parquet
 import numpy as np
 import pandas as pd
 import pickle
@@ -38,6 +41,23 @@ file_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
 logger.addHandler(file_handler)
 
+def load_params(params_path: str) -> dict:
+    """Load parameters from a YAML file."""
+    try:
+        with open(params_path, 'r') as file:
+            params = yaml.safe_load(file)
+        logger.debug('Parameters retrieved from %s', params_path)
+        return params
+    except FileNotFoundError:
+        logger.error('File not found: %s', params_path)
+        raise
+    except yaml.YAMLError as e:
+        logger.error('YAML error: %s', e)
+        raise
+    except Exception as e:
+        logger.error('Unexpected error: %s', e)
+        raise
+
 def load_data(file_path:str)->pd.DataFrame:
     """
     Load data from a CSV file.
@@ -46,7 +66,7 @@ def load_data(file_path:str)->pd.DataFrame:
     :return: Loaded DataFrame
     """
     try:
-        df=pd.read_csv(file_path)
+        df = pd.read_csv(file_path)
         logger.debug('data loaded from %s with shape %s',file_path,df.shape)
         return df
     except pd.errors.ParserError as e:
@@ -75,18 +95,33 @@ def train_model(x_train:np.ndarray,y_train:np.ndarray)->StackingClassifier:
         
         logger.debug('Initializing StackingClassifier with base learners')
 
-        svc = SVC(kernel= "sigmoid", gamma  = 1.0)
+        params=load_params('params.yaml')
+        n_estimators=params['model_building']['n_estimators']
+        random_state=params['model_building']['random_state']
+        max_depth=params['model_building']['max_depth']
+        final_estimator=params['model_building']['final_estimator']
+
+        svc = SVC(kernel="sigmoid", gamma=1.0, probability=True)  # ensure predict_proba works
         knc = KNeighborsClassifier()
         mnb = MultinomialNB()
-        dtc = DecisionTreeClassifier(max_depth = 5)
-        lrc = LogisticRegression(solver = 'liblinear', penalty = 'l1')
-        rfc = RandomForestClassifier(n_estimators = 50, random_state = 2 )
-        abc = AdaBoostClassifier(n_estimators = 50, random_state = 2)
-        bc = BaggingClassifier(n_estimators = 50, random_state = 2)
-        etc = ExtraTreesClassifier(n_estimators = 50, random_state = 2)
-        gbdt = GradientBoostingClassifier(n_estimators = 50, random_state = 2)    
-        xgb  = XGBClassifier(n_estimators = 50, random_state = 2)
+        dtc = DecisionTreeClassifier(max_depth=max_depth, random_state=random_state)
+        lrc = LogisticRegression(solver="liblinear", penalty="l1", random_state=random_state)
+        rfc = RandomForestClassifier(n_estimators=n_estimators, random_state=random_state)
+        abc = AdaBoostClassifier(n_estimators=n_estimators, random_state=random_state)
+        bc = BaggingClassifier(n_estimators=n_estimators, random_state=random_state)
+        etc = ExtraTreesClassifier(n_estimators=n_estimators, random_state=random_state)
+        gbdt = GradientBoostingClassifier(n_estimators=n_estimators, random_state=random_state)
+        xgb = XGBClassifier(n_estimators=n_estimators, random_state=random_state)
         
+        final_estimator_map={
+            'logistic':LogisticRegression(solver='liblinear',penalty='l1',random_state=random_state),
+            'random_forest':RandomForestClassifier(n_estimators=n_estimators,random_state=random_state),
+            "svc": SVC(probability=True, random_state=random_state),
+            "xgb": XGBClassifier(n_estimators=n_estimators, random_state=random_state)
+        }
+
+        final_estimator_obj=final_estimator_map.get(final_estimator,LogisticRegression())
+
         logger.debug('Model training started with %d samples', x_train.shape[0])
         stacking_clf = StackingClassifier(
                 estimators=[
@@ -102,7 +137,7 @@ def train_model(x_train:np.ndarray,y_train:np.ndarray)->StackingClassifier:
                 ('gbdt', gbdt),
                 ('xgb', xgb)
             ],
-            final_estimator=LogisticRegression(),
+            final_estimator=final_estimator_obj,
             passthrough=False
         )
         logger.debug('Model training started with %d samples', x_train.shape[0])

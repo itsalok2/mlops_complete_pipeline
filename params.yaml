@@ -1,0 +1,11 @@
+data_ingestion:
+  test_size: 0.3
+
+feature_engineering:
+  max_features: 500
+
+model_building:
+  random_state: 2
+  n_estimators: 70
+  max_depth: 10
+  final_estimator: "logistic"   # options: logistic, random_forest, svc, xgb
